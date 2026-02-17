@@ -2,48 +2,48 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Rogue Curl Redux</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Curling Skill Draft</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app" class="crt">
     <header class="topbar">
-      <div><b>ROGUE CURL // REDUX</b></div>
-      <div>Seed <span id="seedText"></span> <button id="copySeedBtn">Copy</button></div>
-      <div>Credits <span id="creditsText">0</span></div>
+      <div><strong>NORMAL CURLING // SKILL DRAFT</strong></div>
+      <div>Skill: <span id="skillText">-</span></div>
+      <div>Score You <span id="pScore">0</span> - <span id="aScore">0</span> AI</div>
     </header>
 
-    <main id="screenMatch" class="screen active">
-      <section class="board-wrap">
-        <canvas id="gameCanvas" width="920" height="520"></canvas>
+    <section id="screenDraft" class="screen active flow">
+      <h2>Pick Your Pre-Game Skill Card</h2>
+      <div id="draftCards" class="cards"></div>
+    </section>
+
+    <main id="screenMatch" class="screen">
+      <section class="left">
+        <canvas id="gameCanvas" width="980" height="560"></canvas>
         <div class="controls">
           <button id="handleBtn">Handle: OUT</button>
-          <div class="meter-block">
-            <label>Weight</label>
+          <div class="meter-wrap">
+            <label>Power</label>
             <div class="meter"><div id="powerFill"></div></div>
-            <small>Hold Enter / Mouse, release to throw</small>
+            <small>Hold Enter/Mouse and release</small>
           </div>
-          <div class="meter-block">
-            <label>Sweep Stamina</label>
+          <div class="meter-wrap">
+            <label>Stamina</label>
             <div class="meter"><div id="staminaFill"></div></div>
-            <small>Hold Space while YOUR stone is moving</small>
+            <small>Hold Space/Mouse to sweep</small>
           </div>
         </div>
       </section>
 
-      <aside class="sidebar">
+      <aside class="right">
         <div class="panel">
           <h3>Match</h3>
-          <div>End <span id="endText">1</span>/6</div>
-          <div>Throw <span id="throwText">1/10</span></div>
-          <div>You <span id="pScore">0</span> - <span id="aScore">0</span> AI</div>
-          <div>Hammer <span id="hammerText">You</span></div>
-          <div>AI Style <span id="aiStyleText">-</span></div>
-        </div>
-        <div class="panel">
-          <h3>Run Path</h3>
-          <div id="nodeMap"></div>
+          <div>End <span id="endText">1</span>/8</div>
+          <div>Throw <span id="throwText">1 / 10</span></div>
+          <div>Hammer: <span id="hammerText">You</span></div>
+          <div>AI Style: <span id="aiText">-</span></div>
         </div>
         <div class="panel">
           <h3>Log</h3>
@@ -52,33 +52,16 @@
       </aside>
     </main>
 
-    <section id="screenReward" class="screen flow">
-      <h2>Choose Reward</h2>
-      <div id="rewardCards" class="cards"></div>
-    </section>
-
-    <section id="screenShop" class="screen flow">
-      <h2>Shop</h2>
-      <div id="shopCards" class="cards"></div>
-      <button id="shopDoneBtn">Continue</button>
-    </section>
-
-    <section id="screenEvent" class="screen flow">
-      <h2>Event</h2>
-      <div id="eventText"></div>
-      <div id="eventCards" class="cards"></div>
-    </section>
-
     <section id="screenEnd" class="screen flow">
       <h2>End Summary</h2>
       <div id="endSummary"></div>
-      <button id="endBtn">Continue</button>
+      <button id="nextEndBtn">Next End</button>
     </section>
 
-    <section id="screenRun" class="screen flow">
-      <h2>Run Summary</h2>
-      <div id="runSummary"></div>
-      <button id="newRunBtn">New Run</button>
+    <section id="screenFinal" class="screen flow">
+      <h2>Final Result</h2>
+      <pre id="finalSummary"></pre>
+      <button id="newGameBtn">New Game</button>
     </section>
   </div>
   <script src="game.js"></script>
