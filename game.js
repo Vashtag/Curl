@@ -47,6 +47,7 @@ const upgrades = buildUpgrades();
 const curses = buildCurses();
 const events = buildEvents();
 let g;
+let bound = false;
 
 function buildUpgrades() {
   const a = [];
@@ -155,18 +156,21 @@ function start(seed) {
   updateHUD();
   mapRender();
   show('screenMatch');
+  if (g.state === 'ai') setTimeout(aiThrow, 260);
 }
 
 function bind() {
+  if (bound) return;
+  bound = true;
   el.copySeedBtn.onclick = () => navigator.clipboard?.writeText(g.seed);
   el.handleBtn.onclick = () => { g.input.handle *= -1; el.handleBtn.textContent = `Handle: ${g.input.handle === 1 ? 'OUT' : 'IN'}`; };
   document.getElementById('endBtn').onclick = afterEnd;
   document.getElementById('shopDoneBtn').onclick = () => rewardScreen();
-  document.getElementById('newRunBtn').onclick = () => start();
+  document.getElementById('newRunBtn').onclick = () => { bound = false; start(); };
 
   canvas.onmousemove = e => { if (g.state !== 'aim') return; const r = canvas.getBoundingClientRect(); g.input.ang = Math.atan2((e.clientY - r.top) - hackY, (e.clientX - r.left) - house.x); };
-  canvas.onmousedown = () => { if (g.state === 'aim') g.input.charge = true; };
-  canvas.onmouseup = () => { if (g.state === 'aim') throwPlayer(); };
+  canvas.onmousedown = () => { if (g.state === 'aim') g.input.charge = true; if (g.state === 'move' && g.moving?.team === 'p') g.input.sweep = true; };
+  canvas.onmouseup = () => { if (g.state === 'aim') throwPlayer(); g.input.sweep = false; };
 
   window.onkeydown = e => {
     if (e.code === 'ArrowLeft' && g.state === 'aim') g.input.ang -= 0.03;
@@ -198,8 +202,14 @@ function throwPlayer() {
   const spread = 0.08 * g.mods.playerSpread;
   const handleBias = g.input.handle === 1 ? g.mods.outBonus : g.mods.inBonus;
   const ang = g.input.ang + (g.rng() - .5) * (spread - handleBias * 0.04) + g.mods.handleDrift * (g.rng() - .5);
+  g.lastSnap = {
+    stones: g.stones.map(s => ({ ...s })),
+    throwN: g.throwN,
+    pLeft: g.pLeft,
+    aLeft: g.aLeft,
+    state: g.state
+  };
   spawn('p', clamp(g.input.power, .15, 1), ang, g.input.handle);
-  g.lastSnap = g.stones.map(s => ({ ...s }));
   g.state = 'move';
 }
 
@@ -278,6 +288,7 @@ function stopped() {
   if (g.throwN >= CFG.stonesPerTeam * 2) return scoreEnd();
   if (turnPlayer() && g.pLeft > 0) g.state = 'aim';
   else if (!turnPlayer() && g.aLeft > 0) { g.state = 'ai'; setTimeout(aiThrow, 260); }
+  else g.state = turnPlayer() ? 'ai' : 'aim';
 }
 
 function turnPlayer() { return g.throwN % 2 === 0; }
@@ -443,7 +454,17 @@ function finish() {
   localStorage.setItem('rogueCurlRuns2', JSON.stringify(runs.slice(0, 10)));
 }
 
-function rewind() { g.stones = g.lastSnap.map(s => ({ ...s })); g.rewindsLeft--; line('Rewind used.'); }
+function rewind() {
+  if (!g.lastSnap) return;
+  g.stones = g.lastSnap.stones.map(s => ({ ...s }));
+  g.throwN = g.lastSnap.throwN;
+  g.pLeft = g.lastSnap.pLeft;
+  g.aLeft = g.lastSnap.aLeft;
+  g.moving = null;
+  g.state = 'aim';
+  g.rewindsLeft--;
+  line('Rewind used.');
+}
 
 function updateHUD() {
   el.seedText.textContent = g.seed; el.creditsText.textContent = Math.floor(g.credits);
