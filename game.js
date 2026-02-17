@@ -1,705 +1,503 @@
 /*
 TUNING CONSTANTS
-- Adjust these values to tune core feel:
 */
-const TUNE = {
-  endsMin: 6,
-  endsMax: 8,
-  defaultEnds: 6,
+const CFG = {
+  ends: 6,
   stonesPerTeam: 5,
   dt: 1 / 60,
-  baseFriction: 0.994,
-  sweepFrictionBonus: 0.0032,
-  wallDamp: 0.78,
-  stoneBounceDamp: 0.92,
-  baseCurl: 0.013,
-  lateCurlBoost: 1.25,
-  sweepCurlReduction: 0.55,
-  minSpeedStop: 2.4,
-  maxThrowSpeed: 850,
-  sweepDrainPerSec: 26,
-  staminaRegenOwnIdle: 16,
-  staminaRegenOppTurn: 24,
+  throwSpeed: 860,
+  friction: 0.994,
+  curl: 0.011,
+  lateCurl: 1.15,
+  stopSpeed: 2.5,
+  sweepFrictionBoost: 0.003,
+  sweepCurlCut: 0.5,
+  sweepDrain: 30,
   staminaMax: 100,
-  aiNoiseBase: 0.09,
-  aiEliteNoiseScale: 0.55,
-  aiSweepSkillBase: 0.55,
+  staminaRegenIdle: 17,
+  staminaRegenOpp: 24,
+  wallDamp: 0.78,
+  hitDamp: 0.93,
 };
+
+const AI_TYPES = ['Draw Team', 'Guard & Freeze Team', 'Peelers', 'Aggressive Hitters', 'Stealers'];
+const NODE_TYPES = ['Normal', 'Elite', 'Shop', 'Event'];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+function mulberry32(seed) { return () => { let t = (seed += 0x6D2B79F5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const W = canvas.width;
-const H = canvas.height;
-
-const sheet = { x: 80, y: 40, w: 360, h: 440 };
-const house = { x: sheet.x + sheet.w / 2, y: sheet.y + 100, r4: 86, r8: 56, r12: 28, button: 8 };
-const hogY = sheet.y + sheet.h - 110;
-const hackY = sheet.y + sheet.h - 30;
+const sheet = { x: 90, y: 36, w: 360, h: 448 };
+const house = { x: sheet.x + sheet.w / 2, y: sheet.y + 95, r4: 86, r8: 56, r12: 28, btn: 8 };
+const hogY = sheet.y + sheet.h - 108;
+const hackY = sheet.y + sheet.h - 28;
 
 const el = {
   seedText: document.getElementById('seedText'), copySeedBtn: document.getElementById('copySeedBtn'), creditsText: document.getElementById('creditsText'),
-  endText: document.getElementById('endText'), playerScore: document.getElementById('playerScore'), aiScore: document.getElementById('aiScore'),
-  throwText: document.getElementById('throwText'), hammerText: document.getElementById('hammerText'),
-  iceCurlBar: document.getElementById('iceCurlBar'), iceSpeedBar: document.getElementById('iceSpeedBar'), iceLateBar: document.getElementById('iceLateBar'),
-  eventLog: document.getElementById('eventLog'), nodeMap: document.getElementById('nodeMap'),
-  toggleHandleBtn: document.getElementById('toggleHandleBtn'), powerFill: document.getElementById('powerFill'), staminaFill: document.getElementById('staminaFill'),
-  rewardCards: document.getElementById('rewardCards'), shopItems: document.getElementById('shopItems'), eventText: document.getElementById('eventText'), eventChoices: document.getElementById('eventChoices'),
-  endSummaryText: document.getElementById('endSummaryText'), runSummaryText: document.getElementById('runSummaryText')
+  endText: document.getElementById('endText'), throwText: document.getElementById('throwText'), pScore: document.getElementById('pScore'), aScore: document.getElementById('aScore'), hammerText: document.getElementById('hammerText'), aiStyleText: document.getElementById('aiStyleText'),
+  handleBtn: document.getElementById('handleBtn'), powerFill: document.getElementById('powerFill'), staminaFill: document.getElementById('staminaFill'),
+  nodeMap: document.getElementById('nodeMap'), log: document.getElementById('log'),
+  rewardCards: document.getElementById('rewardCards'), shopCards: document.getElementById('shopCards'), eventText: document.getElementById('eventText'), eventCards: document.getElementById('eventCards'),
+  endSummary: document.getElementById('endSummary'), runSummary: document.getElementById('runSummary')
 };
 
-function mulberry32(seed) {
-  return function () {
-    let t = seed += 0x6D2B79F5;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const lerp = (a, b, t) => a + (b - a) * t;
+const upgrades = buildUpgrades();
+const curses = buildCurses();
+const events = buildEvents();
+let g;
 
-const RARITY = { common: 0.62, uncommon: 0.28, rare: 0.10 };
-const AI_ARCHETYPES = ['Draw Team', 'Guard & Freeze Team', 'Peelers', 'Aggressive Hitters', 'Stealers'];
-const NODE_TYPES = ['Normal', 'Elite', 'Shop', 'Event'];
-
-const upgradePool = buildUpgradePool();
-const cursesPool = buildCurses();
-const eventPool = buildEvents();
-
-let game;
-
-function buildUpgradePool() {
-  const list = [];
-  const add = (id, name, rarity, bucket, desc, apply) => list.push({ id, name, rarity, bucket, desc, apply });
-  // Sweep Tech (10)
-  add('sw1','Carbon Fiber Brush','common','Sweep Tech','+12 max stamina',s=>s.mods.staminaMax+=12);
-  add('sw2','Friction Whisper','common','Sweep Tech','Sweeping carries farther',s=>s.mods.sweepFriction+=0.0008);
-  add('sw3','Line Keeper','common','Sweep Tech','Sweeping keeps it straighter',s=>s.mods.sweepCurlReduction+=0.05);
-  add('sw4','Aerobic Split','common','Sweep Tech','+8 stamina regen',s=>s.mods.stamRegen+=8);
-  add('sw5','Burst Rhythm','uncommon','Sweep Tech','Initial sweep stronger',s=>s.mods.firstSweepBoost+=0.08);
-  add('sw6','Pulse Meter','uncommon','Sweep Tech','Power timing easier',s=>s.mods.powerWindow+=0.05);
-  add('sw7','Nano Bristles','uncommon','Sweep Tech','Sweeping 25% more efficient',s=>s.mods.sweepEff*=1.25);
-  add('sw8','Dual Brush Rig','rare','Sweep Tech','Huge carry while sweeping',s=>s.mods.sweepFriction+=0.0022);
-  add('sw9','Stamina Overclock','rare','Sweep Tech','+30 stamina max',s=>s.mods.staminaMax+=30);
-  add('sw10','Drag Equalizer','rare','Sweep Tech','Base friction slightly lower',s=>s.mods.baseFriction+=0.0015);
-  // Shotbook (10)
-  add('sh1','Draw Notebook','common','Shotbook','Draws are more accurate',s=>s.mods.drawAcc+=0.06);
-  add('sh2','Hit Angles I','common','Shotbook','Hits are more accurate',s=>s.mods.hitAcc+=0.06);
-  add('sh3','Guard Atlas','common','Shotbook','Guard shots tighter',s=>s.mods.guardAcc+=0.08);
-  add('sh4','Freeze Matrix','uncommon','Shotbook','Freeze lines improved',s=>s.mods.freezeAcc+=0.08);
-  add('sh5','Raise Primer','uncommon','Shotbook','Raise attempts stabilize',s=>s.mods.raiseAcc+=0.07);
-  add('sh6','Weight Lexicon','uncommon','Shotbook','Power meter sensitivity +',s=>s.mods.powerControl+=0.12);
-  add('sh7','Out-turn Bible','common','Shotbook','Out-turn correction bonus',s=>s.mods.outTurnBonus+=0.05);
-  add('sh8','In-turn Bible','common','Shotbook','In-turn correction bonus',s=>s.mods.inTurnBonus+=0.05);
-  add('sh9','Situational Pages','rare','Shotbook','All shot categories +',s=>{s.mods.drawAcc+=0.05;s.mods.hitAcc+=0.05;s.mods.guardAcc+=0.05;s.mods.freezeAcc+=0.05;});
-  add('sh10','Perfect Release Drill','rare','Shotbook','Execution noise heavily reduced',s=>s.mods.execNoise*=0.72);
-  // Ice / Intel (10)
-  add('ii1','Pebble Sensor','common','Ice/Intel','Ice report accuracy +',s=>s.mods.iceRead+=0.14);
-  add('ii2','Path Ghost','common','Ice/Intel','Show predicted path',s=>s.mods.predictionLevel=1);
-  add('ii3','Path Ghost+','uncommon','Ice/Intel','Longer predicted path',s=>s.mods.predictionLevel=2);
-  add('ii4','Scout Notes','common','Ice/Intel','Reveal AI archetype intent hints',s=>s.mods.scout+=1);
-  add('ii5','Mini Replay Rig','uncommon','Ice/Intel','1 rewind per end',s=>s.mods.rewindsPerEnd=1);
-  add('ii6','Thermal Lens','uncommon','Ice/Intel','Better late curl report',s=>s.mods.iceReadLate+=0.2);
-  add('ii7','Hammer Tutor','common','Ice/Intel','Hammer strategy bonus points',s=>s.mods.hammerIQ+=0.2);
-  add('ii8','Wear Monitor','uncommon','Ice/Intel','Wear growth reduced',s=>s.mods.wearSlow+=0.12);
-  add('ii9','Silent Skip Radio','rare','Ice/Intel','AI noise + for one end start',s=>s.mods.aiDisrupt+=0.16);
-  add('ii10','Oracle Screen','rare','Ice/Intel','Ice report near perfect',s=>s.mods.iceRead=1.0);
-  return list;
+function buildUpgrades() {
+  const a = [];
+  const add = (id, name, r, b, d, fx) => a.push({ id, name, rarity: r, bucket: b, desc: d, apply: fx });
+  // Sweep Tech 10
+  add('sw1', 'Broom Grip', 'common', 'Sweep Tech', '+10 stamina', s => s.mods.staminaMax += 10);
+  add('sw2', 'Cleaner Line', 'common', 'Sweep Tech', 'Sweeping straightens more', s => s.mods.sweepCurl += 0.05);
+  add('sw3', 'Long Brush', 'common', 'Sweep Tech', 'Sweeping adds carry', s => s.mods.sweepCarry += 0.0007);
+  add('sw4', 'Breathing Drill', 'common', 'Sweep Tech', '+8 stamina regen', s => s.mods.stamRegen += 8);
+  add('sw5', 'Switch Rhythm', 'uncommon', 'Sweep Tech', 'Sweeping drains less', s => s.mods.sweepDrain *= 0.9);
+  add('sw6', 'Split Step', 'uncommon', 'Sweep Tech', 'Sweeping efficiency +20%', s => s.mods.sweepEff *= 1.2);
+  add('sw7', 'Hardline Head', 'uncommon', 'Sweep Tech', 'Carry ++', s => s.mods.sweepCarry += 0.0013);
+  add('sw8', 'Pulse Reader', 'rare', 'Sweep Tech', 'Huge curl reduction on sweep', s => s.mods.sweepCurl += 0.13);
+  add('sw9', 'Elite Cardio', 'rare', 'Sweep Tech', '+30 stamina', s => s.mods.staminaMax += 30);
+  add('sw10', 'Nano Pad', 'rare', 'Sweep Tech', 'Carry +++', s => s.mods.sweepCarry += 0.002);
+  // Shotbook 10
+  add('sh1', 'Draw Notes', 'common', 'Shotbook', 'Draw accuracy +', s => s.mods.drawAcc += 0.06);
+  add('sh2', 'Hit Notes', 'common', 'Shotbook', 'Hit accuracy +', s => s.mods.hitAcc += 0.06);
+  add('sh3', 'Guard Notes', 'common', 'Shotbook', 'Guard accuracy +', s => s.mods.guardAcc += 0.06);
+  add('sh4', 'Freeze Notes', 'uncommon', 'Shotbook', 'Freeze accuracy +', s => s.mods.freezeAcc += 0.08);
+  add('sh5', 'Raise Notes', 'uncommon', 'Shotbook', 'Raise accuracy +', s => s.mods.raiseAcc += 0.08);
+  add('sh6', 'Release Cue', 'common', 'Shotbook', 'Player spread -', s => s.mods.playerSpread *= 0.9);
+  add('sh7', 'Weight Feel', 'uncommon', 'Shotbook', 'Power control +', s => s.mods.powerControl += 0.1);
+  add('sh8', 'Out-turn Prep', 'common', 'Shotbook', 'Out-turn bonus', s => s.mods.outBonus += 0.05);
+  add('sh9', 'In-turn Prep', 'common', 'Shotbook', 'In-turn bonus', s => s.mods.inBonus += 0.05);
+  add('sh10', 'Skip Bible', 'rare', 'Shotbook', 'All shot acc +', s => { s.mods.drawAcc += .05; s.mods.hitAcc += .05; s.mods.guardAcc += .05; s.mods.freezeAcc += .05; });
+  // Intel 10 (no ice conditions)
+  add('in1', 'Path Ghost', 'common', 'Intel', 'Predicted path on', s => s.mods.pred = 1);
+  add('in2', 'Path Ghost+', 'uncommon', 'Intel', 'Longer predicted path', s => s.mods.pred = 2);
+  add('in3', 'Skip Scout', 'common', 'Intel', 'AI hint line in log', s => s.mods.scout += 1);
+  add('in4', 'Replay Chip', 'uncommon', 'Intel', '1 rewind each end', s => s.mods.rewinds = 1);
+  add('in5', 'Wallet Hook', 'common', 'Intel', '+25 credits now', s => s.credits += 25);
+  add('in6', 'Budget Sheet', 'common', 'Intel', 'Shop costs -10%', s => s.mods.shopCost *= 0.9);
+  add('in7', 'Hammer Logic', 'uncommon', 'Intel', 'Score eval with hammer +', s => s.mods.hammerIQ += 0.2);
+  add('in8', 'Sabotage Clip', 'uncommon', 'Intel', 'AI noise +', s => s.mods.aiNoise += 0.02);
+  add('in9', 'Elite Tape', 'rare', 'Intel', 'Elite bonus rewards +', s => s.mods.eliteBonus += 0.2);
+  add('in10', 'Banker Friend', 'rare', 'Intel', '+60 credits now', s => s.credits += 60);
+  return a;
 }
 
 function buildCurses() {
   return [
-    {id:'c1',name:'Blunt Brush',desc:'Sweeping efficiency -20%',apply:s=>s.mods.sweepEff*=0.8},
-    {id:'c2',name:'Heavy Boots',desc:'Stamina max -20',apply:s=>s.mods.staminaMax-=20},
-    {id:'c3',name:'Fogged Glass',desc:'Ice read worsens',apply:s=>s.mods.iceRead-=0.2},
-    {id:'c4',name:'Shaky Release',desc:'Execution noise +20%',apply:s=>s.mods.execNoise*=1.2},
-    {id:'c5',name:'Late Panic',desc:'Late curl feels stronger',apply:s=>s.mods.playerLateCurlPenalty+=0.2},
-    {id:'c6',name:'Thin Handle',desc:'Handle drift',apply:s=>s.mods.handleDrift+=0.08},
-    {id:'c7',name:'Bad Pebble',desc:'Wear increases faster',apply:s=>s.mods.wearSlow-=0.15},
-    {id:'c8',name:'Nervy Skip',desc:'Power control worse',apply:s=>s.mods.powerControl-=0.14},
-    {id:'c9',name:'Crunchy Ice',desc:'Base friction higher',apply:s=>s.mods.baseFriction-=0.0014},
-    {id:'c10',name:'Cold Grip',desc:'Sweeping drains more stamina',apply:s=>s.mods.sweepDrainMult*=1.25},
-  ];
+    ['c1', 'Lead Boots', s => s.mods.staminaMax -= 20],
+    ['c2', 'Blunt Brush', s => s.mods.sweepEff *= 0.8],
+    ['c3', 'Nervous Skip', s => s.mods.playerSpread *= 1.25],
+    ['c4', 'Heavy Stone', s => s.mods.baseFriction -= 0.001],
+    ['c5', 'Cold Fingers', s => s.mods.sweepDrain *= 1.3],
+    ['c6', 'Muddled Calls', s => s.mods.drawAcc -= 0.05],
+    ['c7', 'Late Panic', s => s.mods.lateCurlPenalty += 0.2],
+    ['c8', 'Loose Handle', s => s.mods.handleDrift += 0.07],
+    ['c9', 'Thin Purse', s => s.mods.shopCost *= 1.2],
+    ['c10', 'Bad Tape', s => s.mods.aiNoise -= 0.02],
+  ].map(([id, name, apply]) => ({ id, name, apply }));
 }
 
 function buildEvents() {
   return [
     {
-      title: 'Broken Broom Vendor',
-      text: 'A shady tech offers a prototype brush core.',
-      choices: [
-        { label: 'Buy for 40 credits (+rare sweep)', effect: s => { if (s.credits>=40){s.credits-=40; grantSpecificUpgrade(s,'sw8');} else log('Not enough credits.'); } },
-        { label: 'Take cursed version (free + curse)', effect: s => { grantSpecificUpgrade(s,'sw8'); giveRandomCurse(s);} },
-        { label: 'Walk away', effect: s => s.credits += 5 }
+      t: 'Prototype Brush', d: 'Risky tech from a traveling rep.',
+      c: [
+        { l: 'Buy (40) rare sweep', e: s => { if (s.credits >= 40) { s.credits -= 40; grant('sw8'); } } },
+        { l: 'Take free + curse', e: s => { grant('sw8'); addCurse(); } },
+        { l: 'Leave (+10 credits)', e: s => s.credits += 10 }
       ]
     },
     {
-      title: 'Video Room',
-      text: 'Ancient tapes reveal elite release timing.',
-      choices: [
-        { label: 'Study (Shotbook upgrade)', effect: s => giveRandomUpgrade(s, 'Shotbook') },
-        { label: 'Sell tapes (+35 credits)', effect: s => s.credits += 35 },
-        { label: 'Overstudy (2 upgrades + curse)', effect: s => {giveRandomUpgrade(s,'Shotbook');giveRandomUpgrade(s,'Ice/Intel');giveRandomCurse(s);} }
+      t: 'Archive Room', d: 'Tape library of old champions.',
+      c: [
+        { l: 'Study Shotbook', e: _ => grantRnd('Shotbook') },
+        { l: 'Study Intel', e: _ => grantRnd('Intel') },
+        { l: 'Binge (2 upgrades + curse)', e: _ => { grantRnd('Shotbook'); grantRnd('Intel'); addCurse(); } }
       ]
     },
     {
-      title: 'Mystery Pebbling',
-      text: 'An arena worker offers custom pebble prep.',
-      choices: [
-        { label: 'Accept (+ice intel)', effect: s => giveRandomUpgrade(s, 'Ice/Intel') },
-        { label: 'Demand premium (+rare, pay 30)', effect: s => { if (s.credits>=30){s.credits-=30; offerRare(s);} } },
-        { label: 'Refuse (gain 10 credits)', effect: s => s.credits += 10 }
+      t: 'Sponsorship Call', d: 'Offer money if you accept pressure.',
+      c: [
+        { l: '+70 credits + curse', e: s => { s.credits += 70; addCurse(); } },
+        { l: '+35 credits clean', e: s => s.credits += 35 },
+        { l: 'Decline', e: _ => 0 }
       ]
     }
   ];
 }
 
-function createGame(seedInput) {
-  const seed = seedInput || String(Math.floor(Math.random()*9e8)+1);
-  const seedNum = [...seed].reduce((a,c)=>a + c.charCodeAt(0),0) >>> 0;
-  const rng = mulberry32(seedNum);
-  const ends = TUNE.defaultEnds;
-  const nodes = Array.from({length: ends}, (_,i)=> i===0 ? 'Normal' : NODE_TYPES[Math.floor(rng()*NODE_TYPES.length)]);
-  nodes[Math.floor(ends/2)-1] = 'Elite';
-  nodes[ends-1] = 'Elite';
+function newGame(seed) {
+  const str = seed || String(Math.floor(Math.random() * 1e9));
+  const n = [...str].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const rng = mulberry32(n);
+  const nodes = Array.from({ length: CFG.ends }, (_, i) => i ? NODE_TYPES[Math.floor(rng() * NODE_TYPES.length)] : 'Normal');
+  nodes[2] = 'Elite'; nodes[CFG.ends - 1] = 'Elite';
   return {
-    seed, seedNum, rng, ends, nodes, currentEnd: 1, currentNodeIndex: 0,
-    state: 'aim', stones: [], movingStone: null, pendingAI:false,
-    throwIndex: 0, playerStonesLeft: TUNE.stonesPerTeam, aiStonesLeft: TUNE.stonesPerTeam,
-    hammer: 'player',
-    score: { player:0, ai:0 }, credits: 40,
-    runLog: [], upgrades: [], curses: [],
-    lastStoneSnapshot:null, rewindsLeft:0,
-    ice: { baseCurl:0.012, iceSpeed:1, lateCurl:1, wear:0 },
-    ai: { archetype: AI_ARCHETYPES[Math.floor(rng()*AI_ARCHETYPES.length)], noise: TUNE.aiNoiseBase, sweepSkill:TUNE.aiSweepSkillBase },
-    playerInput: { angle: -Math.PI/2, handle: 1, charging:false, power:0, sweepActive:false, stamina:TUNE.staminaMax },
-    mods: {
-      staminaMax:TUNE.staminaMax, sweepFriction: TUNE.sweepFrictionBonus, sweepCurlReduction:TUNE.sweepCurlReduction,
-      stamRegen:0, firstSweepBoost:0, powerWindow:0, sweepEff:1,
-      drawAcc:0, hitAcc:0, guardAcc:0, freezeAcc:0, raiseAcc:0,
-      powerControl:0, outTurnBonus:0, inTurnBonus:0, execNoise:1,
-      predictionLevel:0, iceRead:0.42, iceReadLate:0, scout:0, rewindsPerEnd:0,
-      hammerIQ:0, wearSlow:0, aiDisrupt:0,
-      playerLateCurlPenalty:0, handleDrift:0, baseFriction:0, sweepDrainMult:1,
-    },
-    history: []
+    seed: str, rng, nodes, end: 1, nodeI: 0,
+    score: { p: 0, a: 0 }, credits: 40, hammer: 'p',
+    stones: [], moving: null, throwN: 0, pLeft: CFG.stonesPerTeam, aLeft: CFG.stonesPerTeam,
+    state: 'aim', ai: { type: AI_TYPES[Math.floor(rng() * AI_TYPES.length)], noise: 0.08, sweep: 0.56 },
+    input: { ang: -Math.PI / 2, handle: 1, charge: false, power: 0, sweep: false, stamina: CFG.staminaMax },
+    up: [], curses: [], rewindsLeft: 0, lastSnap: null,
+    mods: { staminaMax: CFG.staminaMax, sweepCurl: 0, sweepCarry: 0, stamRegen: 0, sweepDrain: 1, sweepEff: 1, drawAcc: 0, hitAcc: 0, guardAcc: 0, freezeAcc: 0, raiseAcc: 0, playerSpread: 1, powerControl: 0, outBonus: 0, inBonus: 0, pred: 0, scout: 0, rewinds: 0, shopCost: 1, hammerIQ: 0, aiNoise: 0, eliteBonus: 0, lateCurlPenalty: 0, handleDrift: 0, baseFriction: 0 }
   };
 }
 
-function startRun(seed) {
-  game = createGame(seed);
-  log('New run booted.');
-  setupEnd();
-  bindUI();
+function start(seed) {
+  g = newGame(seed);
+  bind();
+  resetEnd();
   updateHUD();
-  renderNodeMap();
-  showScreen('screenMatch');
+  mapRender();
+  show('screenMatch');
 }
 
-function bindUI() {
-  el.copySeedBtn.onclick = () => navigator.clipboard?.writeText(game.seed);
-  el.toggleHandleBtn.onclick = () => {
-    game.playerInput.handle *= -1;
-    el.toggleHandleBtn.textContent = `Handle: ${game.playerInput.handle===1?'OUT':'IN'}`;
-  };
-  document.getElementById('endSummaryContinueBtn').onclick = afterEndContinue;
-  document.getElementById('shopContinueBtn').onclick = () => showRewardScreen();
-  document.getElementById('newRunBtn').onclick = () => startRun();
+function bind() {
+  el.copySeedBtn.onclick = () => navigator.clipboard?.writeText(g.seed);
+  el.handleBtn.onclick = () => { g.input.handle *= -1; el.handleBtn.textContent = `Handle: ${g.input.handle === 1 ? 'OUT' : 'IN'}`; };
+  document.getElementById('endBtn').onclick = afterEnd;
+  document.getElementById('shopDoneBtn').onclick = () => rewardScreen();
+  document.getElementById('newRunBtn').onclick = () => start();
 
-  canvas.onmousemove = (e) => {
-    if (game.state !== 'aim') return;
-    const r = canvas.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    game.playerInput.angle = Math.atan2(my - hackY, mx - house.x);
-  };
-  canvas.onmousedown = () => { if (game.state==='aim') game.playerInput.charging = true; };
-  canvas.onmouseup = () => { if (game.state==='aim') launchPlayerStone(); };
+  canvas.onmousemove = e => { if (g.state !== 'aim') return; const r = canvas.getBoundingClientRect(); g.input.ang = Math.atan2((e.clientY - r.top) - hackY, (e.clientX - r.left) - house.x); };
+  canvas.onmousedown = () => { if (g.state === 'aim') g.input.charge = true; };
+  canvas.onmouseup = () => { if (g.state === 'aim') throwPlayer(); };
 
-  window.onkeydown = (e) => {
-    if (e.code === 'ArrowLeft' && game.state==='aim') game.playerInput.angle -= 0.03;
-    if (e.code === 'ArrowRight' && game.state==='aim') game.playerInput.angle += 0.03;
-    if (e.code === 'Enter' && game.state==='aim' && !game.playerInput.charging) game.playerInput.charging = true;
-    if (e.code === 'Space') game.playerInput.sweepActive = true;
-    if (e.code === 'KeyR' && game.state==='aim' && game.rewindsLeft>0 && game.lastStoneSnapshot) rewindStone();
+  window.onkeydown = e => {
+    if (e.code === 'ArrowLeft' && g.state === 'aim') g.input.ang -= 0.03;
+    if (e.code === 'ArrowRight' && g.state === 'aim') g.input.ang += 0.03;
+    if (e.code === 'Enter' && g.state === 'aim') g.input.charge = true;
+    if (e.code === 'Space') g.input.sweep = true;
+    if (e.code === 'KeyR' && g.state === 'aim' && g.rewindsLeft > 0 && g.lastSnap) rewind();
   };
-  window.onkeyup = (e) => {
-    if (e.code === 'Enter' && game.state==='aim' && game.playerInput.charging) launchPlayerStone();
-    if (e.code === 'Space') game.playerInput.sweepActive = false;
+  window.onkeyup = e => {
+    if (e.code === 'Enter' && g.state === 'aim' && g.input.charge) throwPlayer();
+    if (e.code === 'Space') g.input.sweep = false;
   };
 }
 
-function setupEnd() {
-  const elite = game.nodes[game.currentNodeIndex] === 'Elite';
-  const base = 0.009 + game.rng()*0.008;
-  game.ice.baseCurl = base;
-  game.ice.iceSpeed = 0.9 + game.rng()*0.25;
-  game.ice.lateCurl = 0.85 + game.rng()*0.55;
-  game.ice.wear += (0.02 * (1 - game.mods.wearSlow)) + (elite ? 0.03 : 0);
-
-  game.stones = [];
-  game.movingStone = null;
-  game.throwIndex = 0;
-  game.playerStonesLeft = TUNE.stonesPerTeam;
-  game.aiStonesLeft = TUNE.stonesPerTeam;
-  game.playerInput.stamina = game.mods.staminaMax;
-  game.rewindsLeft = game.mods.rewindsPerEnd;
-  game.ai.archetype = AI_ARCHETYPES[Math.floor(game.rng()*AI_ARCHETYPES.length)];
-  game.ai.noise = (TUNE.aiNoiseBase + (elite ? -0.03 : 0)) * (elite ? TUNE.aiEliteNoiseScale : 1) - game.mods.aiDisrupt;
-  game.ai.sweepSkill = TUNE.aiSweepSkillBase + (elite ? 0.22 : 0);
-  log(`End ${game.currentEnd} on ${game.nodes[game.currentNodeIndex]} node. AI: ${game.ai.archetype}`);
+function resetEnd() {
+  g.stones = []; g.moving = null; g.throwN = 0; g.pLeft = CFG.stonesPerTeam; g.aLeft = CFG.stonesPerTeam;
+  g.input.stamina = g.mods.staminaMax; g.rewindsLeft = g.mods.rewinds; g.state = g.hammer === 'p' ? 'aim' : 'ai';
+  const elite = g.nodes[g.nodeI] === 'Elite';
+  g.ai.type = AI_TYPES[Math.floor(g.rng() * AI_TYPES.length)];
+  g.ai.noise = Math.max(0.015, 0.085 - (elite ? 0.035 : 0) - g.mods.aiNoise);
+  g.ai.sweep = 0.55 + (elite ? 0.2 : 0);
+  line(`End ${g.end} // ${g.nodes[g.nodeI]} // AI ${g.ai.type}`);
+  if (g.mods.scout) line(`Scout: ${g.ai.type} likes ${g.ai.type.includes('Hit') || g.ai.type === 'Peelers' ? 'contact' : 'draw control'}.`);
 }
 
-function launchPlayerStone() {
-  game.playerInput.charging = false;
-  if (game.playerStonesLeft <= 0 || game.state !== 'aim') return;
-  const p = clamp(game.playerInput.power, 0.15, 1);
-  const angle = game.playerInput.angle + ((game.rng()-0.5) * (0.08 - game.mods.powerControl*0.04));
-  createStone('player', p, angle, game.playerInput.handle);
-  game.lastStoneSnapshot = snapshotBoard();
-  game.state = 'moving';
+function throwPlayer() {
+  g.input.charge = false;
+  if (g.state !== 'aim' || g.pLeft <= 0) return;
+  const spread = 0.08 * g.mods.playerSpread;
+  const handleBias = g.input.handle === 1 ? g.mods.outBonus : g.mods.inBonus;
+  const ang = g.input.ang + (g.rng() - .5) * (spread - handleBias * 0.04) + g.mods.handleDrift * (g.rng() - .5);
+  spawn('p', clamp(g.input.power, .15, 1), ang, g.input.handle);
+  g.lastSnap = g.stones.map(s => ({ ...s }));
+  g.state = 'move';
 }
 
-function createStone(team, power, angle, handle) {
-  const speed = (TUNE.maxThrowSpeed * power * 0.64) * game.ice.iceSpeed;
-  const stone = {
-    team, x: house.x, y: hackY, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
-    r: 12, handle, moving:true, age:0, sweptTime:0
-  };
-  game.stones.push(stone);
-  game.movingStone = stone;
-  if (team === 'player') game.playerStonesLeft--; else game.aiStonesLeft--;
-  game.throwIndex++;
-  updateHUD();
+function spawn(team, p, ang, handle) {
+  const v = CFG.throwSpeed * p * .63;
+  const s = { team, x: house.x, y: hackY, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, r: 12, handle, moving: true, age: 0 };
+  g.stones.push(s); g.moving = s;
+  if (team === 'p') g.pLeft--; else g.aLeft--;
+  g.throwN++;
 }
 
-function physicsStep(dt) {
-  if (game.playerInput.charging && game.state === 'aim') {
-    game.playerInput.power += dt * 0.95;
-    if (game.playerInput.power > 1) game.playerInput.power = 0;
-    el.powerFill.style.width = `${Math.floor(game.playerInput.power*100)}%`;
+function step() {
+  if (g.input.charge && g.state === 'aim') {
+    g.input.power += CFG.dt * (.95 + g.mods.powerControl);
+    if (g.input.power > 1) g.input.power = 0;
   }
+  el.powerFill.style.width = `${Math.floor(g.input.power * 100)}%`;
 
-  let anyMoving = false;
-  for (const s of game.stones) {
+  let moving = false;
+  for (const s of g.stones) {
     if (!s.moving) continue;
-    anyMoving = true;
-    s.age += dt;
-    const speed = Math.hypot(s.vx, s.vy);
-    let friction = TUNE.baseFriction + game.mods.baseFriction - game.ice.wear*0.03;
-    let curlCoeff = (game.ice.baseCurl + game.ice.wear*0.003) * s.handle;
-    const lateFactor = 1 + ((1 - clamp(speed/360, 0, 1)) * game.ice.lateCurl * TUNE.lateCurlBoost);
-    curlCoeff *= lateFactor;
+    moving = true; s.age += CFG.dt;
+    const sp = Math.hypot(s.vx, s.vy);
+    let fr = CFG.friction + g.mods.baseFriction;
+    let curl = CFG.curl * s.handle * (1 + (1 - clamp(sp / 360, 0, 1)) * (CFG.lateCurl + g.mods.lateCurlPenalty));
 
-    const isPlayerStone = s === game.movingStone && s.team==='player';
-    const aiSweeping = s.team==='ai' && aiSweepDecision(s);
-    const sweepOn = (isPlayerStone && game.playerInput.sweepActive && game.playerInput.stamina > 0) || aiSweeping;
-    if (sweepOn) {
-      friction += game.mods.sweepFriction * game.mods.sweepEff;
-      curlCoeff *= (1 - game.mods.sweepCurlReduction);
-      s.sweptTime += dt;
-      if (isPlayerStone) {
-        game.playerInput.stamina = clamp(game.playerInput.stamina - TUNE.sweepDrainPerSec * game.mods.sweepDrainMult * dt, 0, game.mods.staminaMax);
-      }
+    const pSweep = s === g.moving && s.team === 'p' && g.input.sweep && g.input.stamina > 0;
+    const aSweep = s.team === 'a' && aiSweep(s);
+    if (pSweep || aSweep) {
+      fr += (CFG.sweepFrictionBoost + g.mods.sweepCarry) * g.mods.sweepEff;
+      curl *= (1 - (CFG.sweepCurlCut + g.mods.sweepCurl));
+      if (pSweep) g.input.stamina = clamp(g.input.stamina - CFG.sweepDrain * g.mods.sweepDrain * CFG.dt, 0, g.mods.staminaMax);
     }
 
-    const dirx = s.vx / (speed || 1), diry = s.vy / (speed || 1);
-    s.vx *= friction;
-    s.vy *= friction;
-    s.vx += (-diry) * curlCoeff * speed * dt * 60;
-    s.vy += (dirx) * curlCoeff * speed * dt * 60;
+    const dx = s.vx / (sp || 1), dy = s.vy / (sp || 1);
+    s.vx *= fr; s.vy *= fr;
+    s.vx += -dy * curl * sp * CFG.dt * 60;
+    s.vy += dx * curl * sp * CFG.dt * 60;
+    s.x += s.vx * CFG.dt; s.y += s.vy * CFG.dt;
 
-    s.x += s.vx * dt;
-    s.y += s.vy * dt;
-
-    if (s.x < sheet.x + s.r || s.x > sheet.x + sheet.w - s.r) { s.vx *= -TUNE.wallDamp; s.x = clamp(s.x, sheet.x+s.r, sheet.x+sheet.w-s.r); }
-    if (s.y < sheet.y + s.r || s.y > sheet.y + sheet.h - s.r) { s.vy *= -TUNE.wallDamp; s.y = clamp(s.y, sheet.y+s.r, sheet.y+sheet.h-s.r); }
-
-    if (Math.hypot(s.vx, s.vy) < TUNE.minSpeedStop) { s.vx = 0; s.vy = 0; s.moving = false; }
+    if (s.x < sheet.x + s.r || s.x > sheet.x + sheet.w - s.r) { s.vx *= -CFG.wallDamp; s.x = clamp(s.x, sheet.x + s.r, sheet.x + sheet.w - s.r); }
+    if (s.y < sheet.y + s.r || s.y > sheet.y + sheet.h - s.r) { s.vy *= -CFG.wallDamp; s.y = clamp(s.y, sheet.y + s.r, sheet.y + sheet.h - s.r); }
+    if (Math.hypot(s.vx, s.vy) < CFG.stopSpeed) { s.vx = 0; s.vy = 0; s.moving = false; }
   }
 
-  for (let i=0;i<game.stones.length;i++) for (let j=i+1;j<game.stones.length;j++) resolveCollision(game.stones[i], game.stones[j]);
+  for (let i = 0; i < g.stones.length; i++) for (let j = i + 1; j < g.stones.length; j++) collide(g.stones[i], g.stones[j]);
+  if (!moving && g.state === 'move') stopped();
 
-  if (!anyMoving && game.state === 'moving') onStoneStop();
-
-  if (!game.playerInput.sweepActive && game.state==='moving' && game.movingStone?.team==='player') {
-    game.playerInput.stamina = clamp(game.playerInput.stamina + (TUNE.staminaRegenOwnIdle + game.mods.stamRegen)*dt, 0, game.mods.staminaMax);
-  }
-  if ((game.state==='aiThink' || (game.state==='moving' && game.movingStone?.team==='ai'))) {
-    game.playerInput.stamina = clamp(game.playerInput.stamina + TUNE.staminaRegenOppTurn*dt, 0, game.mods.staminaMax);
-  }
-  el.staminaFill.style.width = `${Math.floor((game.playerInput.stamina/game.mods.staminaMax)*100)}%`;
+  if (!g.input.sweep && g.state === 'move' && g.moving?.team === 'p') g.input.stamina = clamp(g.input.stamina + (CFG.staminaRegenIdle + g.mods.stamRegen) * CFG.dt, 0, g.mods.staminaMax);
+  if (g.state === 'ai' || (g.state === 'move' && g.moving?.team === 'a')) g.input.stamina = clamp(g.input.stamina + CFG.staminaRegenOpp * CFG.dt, 0, g.mods.staminaMax);
+  el.staminaFill.style.width = `${Math.floor(g.input.stamina / g.mods.staminaMax * 100)}%`;
 }
 
-function aiSweepDecision(stone) {
-  const t = stone.age;
-  const style = game.ai.archetype;
-  let skill = game.ai.sweepSkill;
-  if (style === 'Draw Team' && t > 0.8) skill += 0.15;
-  if (style === 'Guard & Freeze Team' && t < 0.8) skill += 0.12;
-  if (style === 'Aggressive Hitters') skill -= 0.06;
-  return game.rng() < clamp(skill,0.1,0.95);
+function aiSweep(s) {
+  let k = g.ai.sweep;
+  if (g.ai.type === 'Draw Team' && s.age > .8) k += .14;
+  if (g.ai.type === 'Guard & Freeze Team' && s.age < .8) k += .13;
+  if (g.ai.type === 'Aggressive Hitters') k -= .07;
+  return g.rng() < clamp(k, .1, .95);
 }
 
-function resolveCollision(a,b){
-  const dx=b.x-a.x, dy=b.y-a.y; const d=Math.hypot(dx,dy); const min=a.r+b.r;
-  if (d<=0 || d>=min) return;
-  const nx=dx/d, ny=dy/d;
-  const overlap=(min-d)/2;
-  a.x-=nx*overlap; a.y-=ny*overlap; b.x+=nx*overlap; b.y+=ny*overlap;
-  const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
-  const velAlongNormal = rvx*nx + rvy*ny;
-  if (velAlongNormal>0) return;
-  const j = -(1+TUNE.stoneBounceDamp)*velAlongNormal/2;
-  const ix = j*nx, iy=j*ny;
-  a.vx -= ix; a.vy -= iy; b.vx += ix; b.vy += iy;
+function collide(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), m = a.r + b.r;
+  if (d <= 0 || d >= m) return;
+  const nx = dx / d, ny = dy / d, ov = (m - d) / 2;
+  a.x -= nx * ov; a.y -= ny * ov; b.x += nx * ov; b.y += ny * ov;
+  const rvx = b.vx - a.vx, rvy = b.vy - a.vy, vn = rvx * nx + rvy * ny;
+  if (vn > 0) return;
+  const j = -(1 + CFG.hitDamp) * vn / 2;
+  a.vx -= j * nx; a.vy -= j * ny; b.vx += j * nx; b.vy += j * ny;
   a.moving = b.moving = true;
 }
 
-function onStoneStop() {
-  game.movingStone = null;
-  if (game.throwIndex >= TUNE.stonesPerTeam*2) return endScoring();
-
-  const playerTurn = isPlayerTurn();
-  if (playerTurn && game.playerStonesLeft > 0) {
-    game.state = 'aim';
-  } else if (!playerTurn && game.aiStonesLeft > 0) {
-    game.state = 'aiThink';
-    setTimeout(aiTakeShot, 300);
-  } else {
-    game.state = playerTurn ? 'aiThink':'aim';
-  }
-  updateHUD();
+function stopped() {
+  g.moving = null;
+  if (g.throwN >= CFG.stonesPerTeam * 2) return scoreEnd();
+  if (turnPlayer() && g.pLeft > 0) g.state = 'aim';
+  else if (!turnPlayer() && g.aLeft > 0) { g.state = 'ai'; setTimeout(aiThrow, 260); }
 }
 
-function isPlayerTurn() { return game.throwIndex % 2 === 0; }
+function turnPlayer() { return g.throwN % 2 === 0; }
 
-function aiTakeShot() {
-  const candidates = generateAICandidates();
-  let best = null;
-  for (const c of candidates) {
-    const sim = simulateShot(c, 'ai', game.ai.noise);
-    const score = evaluateBoard(sim, c);
-    if (!best || score > best.score) best = { c, score };
+function aiThrow() {
+  const options = aiCandidates();
+  let best = options[0], bestScore = -1e9;
+  for (const o of options) {
+    const board = sim(o);
+    const sc = evalBoard(board, o);
+    if (sc > bestScore) { bestScore = sc; best = o; }
   }
-  const pick = (game.rng() < 0.15) ? candidates[Math.floor(game.rng()*candidates.length)] : best.c;
-  createStone('ai', pick.power, pick.angle, pick.handle);
-  game.state = 'moving';
+  if (g.rng() < 0.13) best = options[Math.floor(g.rng() * options.length)];
+  spawn('a', best.power, best.ang, best.handle); g.state = 'move';
 }
 
-function generateAICandidates() {
+function aiCandidates() {
   const arr = [];
-  const style = game.ai.archetype;
-  const add = (type, tx, ty, pow, handle=1) => {
-    const ang = Math.atan2(ty-hackY, tx-house.x);
-    arr.push({ type, tx, ty, power: clamp(pow,0.22,1), angle: ang, handle});
-  };
-  const my = game.stones.filter(s=>s.team==='ai');
-  const opp = game.stones.filter(s=>s.team==='player');
-  for (let i=0;i<8;i++) add('draw', house.x + (game.rng()-0.5)*40, house.y + (game.rng()-0.5)*45, 0.52+game.rng()*0.12, game.rng()<0.5?1:-1);
-  for (let i=0;i<4;i++) add('guard', house.x + (game.rng()-0.5)*90, hogY - 30 - game.rng()*30, 0.38+game.rng()*0.1, game.rng()<0.5?1:-1);
-  for (const t of opp.slice(0,3)) add('hit', t.x, t.y, 0.62 + game.rng()*0.22, game.rng()<0.5?1:-1);
-  if (my.length) for (const t of my.slice(0,2)) add('freeze', t.x + (game.rng()-0.5)*10, t.y + 14, 0.49 + game.rng()*0.1, game.rng()<0.5?1:-1);
-  if (style==='Peelers') for (const t of opp.slice(0,4)) add('peel', t.x, t.y, 0.78+game.rng()*0.16);
-  if (style==='Aggressive Hitters') for (const t of opp.slice(0,4)) add('hit+', t.x, t.y, 0.76+game.rng()*0.16);
-  if (style==='Stealers' && game.hammer==='player') for (let i=0;i<3;i++) add('steal-guard', house.x+(game.rng()-0.5)*60, hogY-40-game.rng()*40, 0.41+game.rng()*0.08);
-  return arr.slice(0,20);
+  const add = (type, x, y, p) => arr.push({ type, ang: Math.atan2(y - hackY, x - house.x), power: clamp(p, .25, 1), handle: g.rng() < .5 ? 1 : -1 });
+  const mine = g.stones.filter(s => s.team === 'a');
+  const opp = g.stones.filter(s => s.team === 'p');
+  for (let i = 0; i < 8; i++) add('draw', house.x + (g.rng() - .5) * 40, house.y + (g.rng() - .5) * 40, .5 + g.rng() * .14);
+  for (let i = 0; i < 4; i++) add('guard', house.x + (g.rng() - .5) * 95, hogY - 20 - g.rng() * 35, .38 + g.rng() * .1);
+  for (const t of opp.slice(0, 4)) add('hit', t.x, t.y, .65 + g.rng() * .2);
+  if (mine.length) for (const t of mine.slice(0, 2)) add('freeze', t.x + (g.rng() - .5) * 12, t.y + 15, .5 + g.rng() * .1);
+  if (g.ai.type === 'Peelers') for (const t of opp.slice(0, 4)) add('peel', t.x, t.y, .78 + g.rng() * .15);
+  if (g.ai.type === 'Aggressive Hitters') for (const t of opp.slice(0, 4)) add('blast', t.x, t.y, .82 + g.rng() * .14);
+  if (g.ai.type === 'Stealers' && g.hammer === 'p') for (let i = 0; i < 3; i++) add('steal', house.x + (g.rng() - .5) * 60, hogY - 35 - g.rng() * 35, .42 + g.rng() * .08);
+  return arr.slice(0, 20);
 }
 
-function simulateShot(cand, team, noiseAmp) {
-  const temp = game.stones.map(s=>({...s}));
-  const angle = cand.angle + (game.rng()-0.5)*(noiseAmp + 0.03);
-  const power = cand.power + (game.rng()-0.5)*(noiseAmp*0.7);
-  const stone = { team, x: house.x, y: hackY, vx: Math.cos(angle)*power*TUNE.maxThrowSpeed*0.6, vy: Math.sin(angle)*power*TUNE.maxThrowSpeed*0.6, r:12, handle:cand.handle, moving:true, age:0 };
-  temp.push(stone);
-  for (let step=0;step<280;step++) {
-    let moving=false;
-    for (const s of temp){
-      if(!s.moving) continue; moving=true;
-      const speed=Math.hypot(s.vx,s.vy);
-      const friction = TUNE.baseFriction - game.ice.wear*0.03;
-      let curl = game.ice.baseCurl * s.handle * (1 + (1-clamp(speed/360,0,1))*game.ice.lateCurl);
-      s.vx*=friction; s.vy*=friction;
-      const dx=s.vx/(speed||1), dy=s.vy/(speed||1);
-      s.vx+=(-dy)*curl*speed*0.016*60; s.vy+=(dx)*curl*speed*0.016*60;
-      s.x+=s.vx*0.016; s.y+=s.vy*0.016;
-      if(Math.hypot(s.vx,s.vy)<3) s.moving=false;
+function sim(c) {
+  const stones = g.stones.map(s => ({ ...s }));
+  const ang = c.ang + (g.rng() - .5) * (g.ai.noise + 0.02);
+  const p = c.power + (g.rng() - .5) * g.ai.noise;
+  stones.push({ team: 'a', x: house.x, y: hackY, vx: Math.cos(ang) * CFG.throwSpeed * p * .6, vy: Math.sin(ang) * CFG.throwSpeed * p * .6, r: 12, handle: c.handle, moving: true, age: 0 });
+  for (let st = 0; st < 260; st++) {
+    let m = false;
+    for (const s of stones) {
+      if (!s.moving) continue; m = true;
+      const sp = Math.hypot(s.vx, s.vy);
+      const fr = CFG.friction;
+      const curl = CFG.curl * s.handle * (1 + (1 - clamp(sp / 360, 0, 1)) * CFG.lateCurl);
+      const dx = s.vx / (sp || 1), dy = s.vy / (sp || 1);
+      s.vx *= fr; s.vy *= fr; s.vx += -dy * curl * sp * .016 * 60; s.vy += dx * curl * sp * .016 * 60;
+      s.x += s.vx * .016; s.y += s.vy * .016;
+      if (Math.hypot(s.vx, s.vy) < 3) s.moving = false;
     }
-    for (let i=0;i<temp.length;i++) for(let j=i+1;j<temp.length;j++) resolveCollision(temp[i],temp[j]);
-    if(!moving) break;
+    for (let i = 0; i < stones.length; i++) for (let j = i + 1; j < stones.length; j++) collide(stones[i], stones[j]);
+    if (!m) break;
   }
-  return temp;
+  return stones;
 }
 
-function evaluateBoard(stones, cand) {
-  const own=stones.filter(s=>s.team==='ai' && inHouse(s));
-  const opp=stones.filter(s=>s.team==='player' && inHouse(s));
-  const style=game.ai.archetype;
-  let sc=0;
-  for(const s of own) sc += 120 - dist(s,house);
-  for(const s of opp) sc -= 130 - dist(s,house);
-  const guards = stones.filter(s=>s.team==='ai' && s.y>house.y+45 && s.y<hogY+20 && Math.abs(s.x-house.x)<80).length;
-  sc += guards*14;
-  const openCenter = stones.filter(s=>Math.abs(s.x-house.x)<26 && s.y<hogY && s.y>house.y-20).length===0;
-  if(openCenter) sc -= 12;
-  if(game.hammer==='ai' && game.aiStonesLeft<=1) sc += own.length*16;
-  if(game.hammer==='player' && style==='Stealers') sc += guards*18;
-  if(style==='Draw Team' && cand.type==='draw') sc += 22;
-  if(style==='Guard & Freeze Team' && (cand.type==='guard'||cand.type==='freeze')) sc += 20;
-  if(style==='Peelers' && (cand.type==='peel'||cand.type==='hit')) sc += 24;
-  if(style==='Aggressive Hitters' && cand.type.includes('hit')) sc += 25;
-  return sc + (game.rng()-0.5)*8;
+function evalBoard(stones, c) {
+  const own = stones.filter(s => s.team === 'a' && inHouse(s));
+  const opp = stones.filter(s => s.team === 'p' && inHouse(s));
+  let score = 0;
+  for (const s of own) score += 120 - dist(s, house);
+  for (const s of opp) score -= 130 - dist(s, house);
+  const guards = stones.filter(s => s.team === 'a' && Math.abs(s.x - house.x) < 80 && s.y > house.y + 45 && s.y < hogY + 20).length;
+  score += guards * 14;
+  if (g.hammer === 'a' && g.aLeft <= 1) score += own.length * (15 + g.mods.hammerIQ * 8);
+  if (g.ai.type === 'Draw Team' && c.type === 'draw') score += 22;
+  if (g.ai.type === 'Guard & Freeze Team' && (c.type === 'guard' || c.type === 'freeze')) score += 22;
+  if (g.ai.type === 'Peelers' && (c.type === 'hit' || c.type === 'peel')) score += 24;
+  if (g.ai.type === 'Aggressive Hitters' && (c.type === 'blast' || c.type === 'hit')) score += 26;
+  if (g.ai.type === 'Stealers' && g.hammer === 'p' && c.type === 'steal') score += 24;
+  return score + (g.rng() - .5) * 8;
 }
 
-function inHouse(s){ return dist(s,house)<=house.r4; }
+function inHouse(s) { return dist(s, house) <= house.r4; }
 
-function endScoring() {
-  const p = game.stones.filter(s=>s.team==='player' && inHouse(s)).sort((a,b)=>dist(a,house)-dist(b,house));
-  const a = game.stones.filter(s=>s.team==='ai' && inHouse(s)).sort((a,b)=>dist(a,house)-dist(b,house));
-  let endPts=0,winner='none';
-  const p0 = p[0] ? dist(p[0],house) : Infinity;
-  const a0 = a[0] ? dist(a[0],house) : Infinity;
-  if (p0 < a0) {
-    winner='player';
-    for (const s of p) { if (dist(s,house) < a0) endPts++; }
-    game.score.player += endPts;
-    game.hammer = 'ai';
-  } else if (a0 < p0) {
-    winner='ai';
-    for (const s of a) { if (dist(s,house) < p0) endPts++; }
-    game.score.ai += endPts;
-    game.hammer = 'player';
+function scoreEnd() {
+  const p = g.stones.filter(s => s.team === 'p' && inHouse(s)).sort((a, b) => dist(a, house) - dist(b, house));
+  const a = g.stones.filter(s => s.team === 'a' && inHouse(s)).sort((a, b) => dist(a, house) - dist(b, house));
+  const p0 = p[0] ? dist(p[0], house) : Infinity;
+  const a0 = a[0] ? dist(a[0], house) : Infinity;
+  let who = 'Blank', pts = 0;
+  if (p0 < a0) { who = 'You'; for (const s of p) if (dist(s, house) < a0) pts++; g.score.p += pts; g.hammer = 'a'; }
+  else if (a0 < p0) { who = 'AI'; for (const s of a) if (dist(s, house) < p0) pts++; g.score.a += pts; g.hammer = 'p'; }
+  g.credits += 18 + pts * 5;
+  const txt = `End ${g.end}: ${who}${who !== 'Blank' ? ` scores ${pts}` : ''}. Stones ${g.throwN}/10. AI ${g.ai.type}`;
+  line(txt); el.endSummary.textContent = txt; show('screenEnd'); updateHUD();
+}
+
+function afterEnd() {
+  if (g.end >= CFG.ends) return finish();
+  const n = g.nodes[g.nodeI + 1];
+  if (n === 'Shop') return shopScreen();
+  if (n === 'Event') return eventScreen();
+  rewardScreen();
+}
+
+function rewardScreen() {
+  show('screenReward'); el.rewardCards.innerHTML = '';
+  for (const c of rewardOptions(3, g.nodes[g.nodeI + 1] === 'Elite')) {
+    const d = card(c.name, `${c.bucket || 'Reward'} ${c.rarity || ''}`, c.desc || '');
+    d.onclick = () => { if (c.type === 'credits') g.credits += c.amount; else if (c.type === 'cleanse') cleanse(); else takeUpgrade(c); nextEnd(); };
+    el.rewardCards.appendChild(d);
   }
-  game.credits += 18 + endPts*5;
-  const summary = `End ${game.currentEnd}: ${winner==='none'?'Blank end':`${winner} scores ${endPts}`}. Stones: ${game.throwIndex}/10`;
-  log(summary);
-  el.endSummaryText.textContent = `${summary} | AI: ${game.ai.archetype}`;
-  showScreen('screenEndSummary');
-  updateHUD();
 }
 
-function afterEndContinue() {
-  if (game.currentEnd >= game.ends) return finishRun();
-  const node = game.nodes[game.currentNodeIndex+1];
-  if (node === 'Shop') return showShopScreen();
-  if (node === 'Event') return showEventScreen();
-  showRewardScreen();
-}
-
-function showRewardScreen() {
-  showScreen('screenReward');
-  el.rewardCards.innerHTML = '';
-  const options = pickRewardCards(3, game.nodes[game.currentNodeIndex+1] === 'Elite');
-  options.forEach(opt => {
-    const c = document.createElement('div');
-    c.className = 'card';
-    c.innerHTML = `<b>${opt.name}</b><br><small>${opt.bucket || 'Reward'} | ${opt.rarity || 'bonus'}</small><p>${opt.desc || ''}</p>`;
-    c.onclick = () => {
-      if (opt.type === 'credits') game.credits += opt.amount;
-      else if (opt.type === 'removeCurse') removeCurse();
-      else grantUpgrade(opt);
-      proceedNextEnd();
-    };
-    el.rewardCards.appendChild(c);
-  });
-}
-
-function pickRewardCards(n, elite) {
+function rewardOptions(n, elite) {
   const out = [];
-  for (let i=0;i<n;i++) {
-    if (game.rng()<0.16) out.push({type:'credits',name:`Credits Cache +${elite?45:30}`,amount:elite?45:30,desc:'Immediate funding.'});
-    else if (game.curses.length && game.rng()<0.12) out.push({type:'removeCurse',name:'Cleanse',desc:'Remove one curse.'});
-    else out.push(pickUpgradeByRarity(elite));
+  for (let i = 0; i < n; i++) {
+    if (g.rng() < 0.16) out.push({ type: 'credits', name: `Credits +${elite ? 45 : 30}`, amount: elite ? 45 : 30, desc: 'Cash now.' });
+    else if (g.curses.length && g.rng() < 0.12) out.push({ type: 'cleanse', name: 'Cleanse', desc: 'Remove one curse.' });
+    else out.push(randomUpgrade(elite));
   }
   return out;
 }
 
-function pickUpgradeByRarity(elite=false) {
-  const r = game.rng();
-  const rareChance = elite ? 0.2 : RARITY.rare;
-  const uncommonChance = elite ? 0.35 : RARITY.uncommon;
-  const rarity = r < rareChance ? 'rare' : (r < rareChance + uncommonChance ? 'uncommon' : 'common');
-  const pool = upgradePool.filter(u=>u.rarity===rarity && !game.upgrades.includes(u.id));
-  return pool.length ? pool[Math.floor(game.rng()*pool.length)] : upgradePool[Math.floor(game.rng()*upgradePool.length)];
+function randomUpgrade(elite) {
+  const r = g.rng();
+  const rare = elite ? 0.2 + g.mods.eliteBonus : 0.1;
+  const unc = elite ? 0.35 : 0.28;
+  const tier = r < rare ? 'rare' : r < rare + unc ? 'uncommon' : 'common';
+  const pool = upgrades.filter(u => u.rarity === tier && !g.up.includes(u.id));
+  return pool.length ? pool[Math.floor(g.rng() * pool.length)] : upgrades[Math.floor(g.rng() * upgrades.length)];
 }
 
-function grantUpgrade(up) {
-  if (!up || game.upgrades.includes(up.id)) return;
-  game.upgrades.push(up.id);
-  up.apply(game);
-  log(`Upgrade acquired: ${up.name}`);
-}
-function giveRandomUpgrade(state,bucket){
-  const pool = upgradePool.filter(u=>u.bucket===bucket && !state.upgrades.includes(u.id));
-  if(pool.length){const up=pool[Math.floor(state.rng()*pool.length)];state.upgrades.push(up.id);up.apply(state);log(`Event gain: ${up.name}`);} }
-function grantSpecificUpgrade(state,id){const up=upgradePool.find(u=>u.id===id);if(up&&!state.upgrades.includes(id)){state.upgrades.push(id);up.apply(state);log(`Upgrade: ${up.name}`);} }
-function offerRare(state){const pool=upgradePool.filter(u=>u.rarity==='rare'&&!state.upgrades.includes(u.id));if(pool.length){const up=pool[Math.floor(state.rng()*pool.length)];state.upgrades.push(up.id);up.apply(state);log(`Rare gained: ${up.name}`);} }
-function giveRandomCurse(state=game){
-  const avail = cursesPool.filter(c=>!state.curses.includes(c.id));
-  if(!avail.length) return;
-  const c = avail[Math.floor(state.rng()*avail.length)];
-  state.curses.push(c.id); c.apply(state); log(`Curse gained: ${c.name}`);
-}
-function removeCurse(){ if(!game.curses.length) return; const id=game.curses.shift(); log(`Removed curse: ${id}`); }
+function takeUpgrade(u) { if (!u || g.up.includes(u.id)) return; g.up.push(u.id); u.apply(g); line(`Upgrade: ${u.name}`); }
+function grant(id) { const u = upgrades.find(x => x.id === id); if (u) takeUpgrade(u); }
+function grantRnd(bucket) { const p = upgrades.filter(u => u.bucket === bucket && !g.up.includes(u.id)); if (p.length) takeUpgrade(p[Math.floor(g.rng() * p.length)]); }
+function addCurse() { const p = curses.filter(c => !g.curses.includes(c.id)); if (!p.length) return; const c = p[Math.floor(g.rng() * p.length)]; g.curses.push(c.id); c.apply(g); line(`Curse: ${c.name}`); }
+function cleanse() { if (!g.curses.length) return; const id = g.curses.shift(); line(`Removed curse ${id}`); }
 
-function showShopScreen() {
-  showScreen('screenShop');
-  el.shopItems.innerHTML='';
-  const offers = [pickUpgradeByRarity(false), pickUpgradeByRarity(true), {type:'removeCurse',name:'Curse Cleanse',desc:'Remove a curse (35c)',cost:35}, {type:'reroll',name:'Reroll Shelf',desc:'Reroll once (15c)',cost:15}];
-  offers.forEach(o=>{
-    const c=document.createElement('div');c.className='card';
-    const cost = o.cost ?? (o.rarity==='rare'?70:o.rarity==='uncommon'?45:30);
-    c.innerHTML=`<b>${o.name}</b><p>${o.desc||''}</p><small>Cost ${cost}</small>`;
-    c.onclick=()=>{
-      if(game.credits<cost)return log('Insufficient credits.');
-      game.credits-=cost;
-      if(o.type==='removeCurse') removeCurse();
-      else if(o.type==='reroll') showShopScreen();
-      else grantUpgrade(o);
+function shopScreen() {
+  show('screenShop'); el.shopCards.innerHTML = '';
+  const offers = [randomUpgrade(false), randomUpgrade(true), { type: 'cleanse', name: 'Remove Curse', desc: 'Delete one curse', cost: 35 }, { type: 'reroll', name: 'Reroll', desc: 'Refresh shop once', cost: 15 }];
+  offers.forEach(o => {
+    const cost = Math.floor((o.cost ?? (o.rarity === 'rare' ? 70 : o.rarity === 'uncommon' ? 45 : 30)) * g.mods.shopCost);
+    const d = card(o.name, `Cost ${cost}`, o.desc || '');
+    d.onclick = () => {
+      if (g.credits < cost) return line('Not enough credits.');
+      g.credits -= cost;
+      if (o.type === 'cleanse') cleanse(); else if (o.type === 'reroll') shopScreen(); else takeUpgrade(o);
       updateHUD();
     };
-    el.shopItems.appendChild(c);
+    el.shopCards.appendChild(d);
   });
 }
 
-function showEventScreen() {
-  showScreen('screenEvent');
-  el.eventChoices.innerHTML='';
-  const e = eventPool[Math.floor(game.rng()*eventPool.length)];
-  el.eventText.innerHTML = `<b>${e.title}</b><p>${e.text}</p>`;
-  e.choices.forEach(ch=>{
-    const c=document.createElement('div'); c.className='card'; c.innerHTML=`${ch.label}`;
-    c.onclick=()=>{ ch.effect(game); proceedNextEnd(); };
-    el.eventChoices.appendChild(c);
-  });
+function eventScreen() {
+  show('screenEvent'); el.eventCards.innerHTML = '';
+  const ev = events[Math.floor(g.rng() * events.length)];
+  el.eventText.innerHTML = `<b>${ev.t}</b><p>${ev.d}</p>`;
+  ev.c.forEach(c => { const d = card(c.l, '', ''); d.onclick = () => { c.e(g); nextEnd(); }; el.eventCards.appendChild(d); });
 }
 
-function proceedNextEnd() {
-  game.currentEnd++;
-  game.currentNodeIndex++;
-  setupEnd();
-  renderNodeMap();
-  showScreen('screenMatch');
-  game.state = (game.hammer === 'player') ? 'aim' : 'aiThink';
-  if (game.state === 'aiThink') setTimeout(aiTakeShot, 300);
-  updateHUD();
+function nextEnd() {
+  g.end++; g.nodeI++; resetEnd(); mapRender(); show('screenMatch'); updateHUD();
+  if (g.state === 'ai') setTimeout(aiThrow, 260);
 }
 
-function finishRun() {
-  const won = game.score.player > game.score.ai;
-  const text = `Seed ${game.seed}\nFinal: You ${game.score.player} - ${game.score.ai} AI\n${won?'RUN WON':'RUN LOST'}\nUpgrades: ${game.upgrades.length}\nCurses: ${game.curses.length}`;
-  el.runSummaryText.textContent = text;
-  showScreen('screenRunSummary');
-  const key = 'rogueCurlRuns';
-  const arr = JSON.parse(localStorage.getItem(key) || '[]');
-  arr.unshift({ seed:game.seed, score:game.score, upgrades:game.upgrades.length, curses:game.curses.length, won, ts:Date.now() });
-  localStorage.setItem(key, JSON.stringify(arr.slice(0,10)));
-  const bestKey='rogueCurlBest';
-  const best = JSON.parse(localStorage.getItem(bestKey) || 'null');
-  if (!best || game.score.player > best.score.player) localStorage.setItem(bestKey, JSON.stringify({ seed:game.seed, score:game.score }));
+function finish() {
+  const won = g.score.p > g.score.a;
+  el.runSummary.textContent = `Seed ${g.seed}\nFinal You ${g.score.p} - ${g.score.a} AI\n${won ? 'WIN' : 'LOSS'}\nUpgrades ${g.up.length}, Curses ${g.curses.length}`;
+  show('screenRun');
+  const runs = JSON.parse(localStorage.getItem('rogueCurlRuns2') || '[]');
+  runs.unshift({ seed: g.seed, score: g.score, won, upgrades: g.up.length, curses: g.curses.length, ts: Date.now() });
+  localStorage.setItem('rogueCurlRuns2', JSON.stringify(runs.slice(0, 10)));
 }
 
-function rewindStone() {
-  game.stones = game.lastStoneSnapshot.map(s=>({...s}));
-  game.rewindsLeft--;
-  log('Rewind used.');
-}
-
-function snapshotBoard(){ return game.stones.map(s=>({...s})); }
-
-function renderNodeMap() {
-  el.nodeMap.innerHTML='';
-  game.nodes.forEach((n,i)=>{
-    const d=document.createElement('div'); d.className='node'; d.textContent=n[0];
-    if(i===game.currentNodeIndex) d.classList.add('current');
-    if(i<game.currentNodeIndex) d.classList.add('done');
-    el.nodeMap.appendChild(d);
-  });
-}
+function rewind() { g.stones = g.lastSnap.map(s => ({ ...s })); g.rewindsLeft--; line('Rewind used.'); }
 
 function updateHUD() {
-  el.seedText.textContent = game.seed;
-  el.creditsText.textContent = Math.floor(game.credits);
-  el.endText.textContent = game.currentEnd;
-  el.playerScore.textContent = game.score.player;
-  el.aiScore.textContent = game.score.ai;
-  el.throwText.textContent = `${game.throwIndex + 1} / ${TUNE.stonesPerTeam*2}`;
-  el.hammerText.textContent = game.hammer === 'player' ? 'You' : 'AI';
-  const repAcc = clamp(game.mods.iceRead, 0.12, 1);
-  const noise = () => (game.rng()-0.5)*(1-repAcc)*0.5;
-  const curlRep = clamp(game.ice.baseCurl / 0.02 + noise(),0,1);
-  const spdRep = clamp((game.ice.iceSpeed - 0.8)/0.4 + noise(),0,1);
-  const lateRep = clamp(game.ice.lateCurl/1.6 + ((game.rng()-0.5)*(1-(game.mods.iceRead+game.mods.iceReadLate))),0,1);
-  el.iceCurlBar.style.width = `${curlRep*100}%`;
-  el.iceSpeedBar.style.width = `${spdRep*100}%`;
-  el.iceLateBar.style.width = `${lateRep*100}%`;
+  el.seedText.textContent = g.seed; el.creditsText.textContent = Math.floor(g.credits);
+  el.endText.textContent = g.end; el.throwText.textContent = `${g.throwN + 1}/${CFG.stonesPerTeam * 2}`;
+  el.pScore.textContent = g.score.p; el.aScore.textContent = g.score.a;
+  el.hammerText.textContent = g.hammer === 'p' ? 'You' : 'AI'; el.aiStyleText.textContent = g.ai.type;
 }
 
-function showScreen(id) {
-  for (const s of document.querySelectorAll('.screen')) s.classList.remove('active');
-  document.getElementById(id).classList.add('active');
+function mapRender() {
+  el.nodeMap.innerHTML = '';
+  g.nodes.forEach((n, i) => { const d = document.createElement('div'); d.className = 'node'; d.textContent = n[0]; if (i === g.nodeI) d.classList.add('cur'); if (i < g.nodeI) d.classList.add('done'); el.nodeMap.appendChild(d); });
 }
 
-function drawSheet() {
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = '#eef9ff'; ctx.fillRect(sheet.x,sheet.y,sheet.w,sheet.h);
-  ctx.strokeStyle = '#88a'; ctx.strokeRect(sheet.x,sheet.y,sheet.w,sheet.h);
-  ctx.strokeStyle = '#7aa'; ctx.beginPath(); ctx.moveTo(sheet.x,hogY); ctx.lineTo(sheet.x+sheet.w,hogY); ctx.stroke();
-  for (const [r,col] of [[house.r4,'#4af'],[house.r8,'#fff'],[house.r12,'#f66'],[house.button,'#fff']]) {
-    ctx.beginPath(); ctx.arc(house.x,house.y,r,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function card(t, st, d) { const x = document.createElement('div'); x.className = 'card'; x.innerHTML = `<b>${t}</b><br><small>${st}</small><p>${d}</p>`; return x; }
+function line(m) { const d = document.createElement('div'); d.className = 'logline'; d.textContent = '> ' + m; el.log.prepend(d); while (el.log.children.length > 24) el.log.lastChild.remove(); }
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#edf8ff'; ctx.fillRect(sheet.x, sheet.y, sheet.w, sheet.h);
+  ctx.strokeStyle = '#88a'; ctx.strokeRect(sheet.x, sheet.y, sheet.w, sheet.h);
+  ctx.strokeStyle = '#6aa'; ctx.beginPath(); ctx.moveTo(sheet.x, hogY); ctx.lineTo(sheet.x + sheet.w, hogY); ctx.stroke();
+  [[house.r4, '#4af'], [house.r8, '#fff'], [house.r12, '#f66'], [house.btn, '#fff']].forEach(([r, c]) => { ctx.beginPath(); ctx.arc(house.x, house.y, r, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); });
+
+  if (g.state === 'aim') {
+    ctx.strokeStyle = '#0b5'; ctx.beginPath(); ctx.moveTo(house.x, hackY); ctx.lineTo(house.x + Math.cos(g.input.ang) * 170, hackY + Math.sin(g.input.ang) * 170); ctx.stroke();
   }
-  if (game.state==='aim') {
-    ctx.strokeStyle='#1c5'; ctx.beginPath(); ctx.moveTo(house.x,hackY);
-    ctx.lineTo(house.x + Math.cos(game.playerInput.angle)*160, hackY + Math.sin(game.playerInput.angle)*160); ctx.stroke();
-  }
-}
 
-function drawPrediction() {
-  if (game.state!=='aim' || game.mods.predictionLevel<=0) return;
-  const steps = game.mods.predictionLevel===1 ? 40 : 80;
-  let x=house.x,y=hackY;
-  let speed=TUNE.maxThrowSpeed*clamp(game.playerInput.power||0.55,0.2,1)*0.62;
-  let vx=Math.cos(game.playerInput.angle)*speed, vy=Math.sin(game.playerInput.angle)*speed;
-  const handle=game.playerInput.handle;
-  ctx.strokeStyle='rgba(0,180,0,0.6)'; ctx.beginPath(); ctx.moveTo(x,y);
-  for(let i=0;i<steps;i++){
-    const sp=Math.hypot(vx,vy);
-    vx*=TUNE.baseFriction;
-    vy*=TUNE.baseFriction;
-    const curl=(game.ice.baseCurl*handle)*(1+(1-clamp(sp/350,0,1))*game.ice.lateCurl);
-    vx+=(-vy/(sp||1))*curl*sp*0.016*60;
-    vy+=(vx/(sp||1))*curl*sp*0.016*60;
-    x+=vx*0.016; y+=vy*0.016;
-    ctx.lineTo(x,y);
+  if (g.state === 'aim' && g.mods.pred) {
+    const steps = g.mods.pred === 1 ? 45 : 85;
+    let x = house.x, y = hackY, v = CFG.throwSpeed * (g.input.power || .55) * .62;
+    let vx = Math.cos(g.input.ang) * v, vy = Math.sin(g.input.ang) * v;
+    ctx.strokeStyle = 'rgba(0,170,0,.6)'; ctx.beginPath(); ctx.moveTo(x, y);
+    for (let i = 0; i < steps; i++) {
+      const sp = Math.hypot(vx, vy);
+      vx *= CFG.friction; vy *= CFG.friction;
+      const curl = CFG.curl * g.input.handle * (1 + (1 - clamp(sp / 360, 0, 1)) * CFG.lateCurl);
+      const dx = vx / (sp || 1), dy = vy / (sp || 1);
+      vx += -dy * curl * sp * .016 * 60; vy += dx * curl * sp * .016 * 60;
+      x += vx * .016; y += vy * .016; ctx.lineTo(x, y);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
-}
 
-function drawStones() {
-  for (const s of game.stones) {
-    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
-    ctx.fillStyle = s.team==='player' ? '#c33' : '#ff0'; ctx.fill();
-    ctx.strokeStyle='#111'; ctx.stroke();
-    ctx.fillStyle = '#111'; ctx.fillRect(s.x-2,s.y-2,4,4);
+  for (const s of g.stones) {
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fillStyle = s.team === 'p' ? '#c33' : '#ff0'; ctx.fill(); ctx.strokeStyle = '#111'; ctx.stroke();
   }
 }
 
-function log(msg) {
-  const d=document.createElement('div'); d.className='log-line'; d.textContent=`> ${msg}`;
-  el.eventLog.prepend(d);
-  while (el.eventLog.children.length>24) el.eventLog.lastChild.remove();
+function tick() {
+  step(); draw(); updateHUD();
+  if (g.state === 'aim' && !turnPlayer()) { g.state = 'ai'; setTimeout(aiThrow, 260); }
+  requestAnimationFrame(tick);
 }
 
-function loop() {
-  physicsStep(TUNE.dt);
-  drawSheet();
-  drawPrediction();
-  drawStones();
-  if (game.state==='aim' && !isPlayerTurn()) {
-    game.state='aiThink'; setTimeout(aiTakeShot,350);
-  }
-  requestAnimationFrame(loop);
-}
-
-startRun();
-loop();
+start();
+tick();

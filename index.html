@@ -2,90 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Rogue Curl: CRT Sheets</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rogue Curl Redux</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app" class="crt">
     <header class="topbar">
-      <div><strong>ROGUE CURL // MVP</strong></div>
-      <div>Seed: <span id="seedText">-</span> <button id="copySeedBtn">Copy seed</button></div>
-      <div>Credits: <span id="creditsText">0</span></div>
+      <div><b>ROGUE CURL // REDUX</b></div>
+      <div>Seed <span id="seedText"></span> <button id="copySeedBtn">Copy</button></div>
+      <div>Credits <span id="creditsText">0</span></div>
     </header>
 
     <main id="screenMatch" class="screen active">
-      <section class="left-col">
-        <canvas id="gameCanvas" width="900" height="520"></canvas>
+      <section class="board-wrap">
+        <canvas id="gameCanvas" width="920" height="520"></canvas>
         <div class="controls">
-          <button id="toggleHandleBtn">Handle: OUT</button>
-          <div class="power-wrap">
-            <label>Power</label>
-            <div id="powerMeter"><div id="powerFill"></div></div>
-            <small>Hold Enter / Mouse to charge, release to throw</small>
+          <button id="handleBtn">Handle: OUT</button>
+          <div class="meter-block">
+            <label>Weight</label>
+            <div class="meter"><div id="powerFill"></div></div>
+            <small>Hold Enter / Mouse, release to throw</small>
           </div>
-          <div class="stam-wrap">
+          <div class="meter-block">
             <label>Sweep Stamina</label>
-            <div id="staminaMeter"><div id="staminaFill"></div></div>
-            <small>Hold Space / Mouse while your stone moves</small>
+            <div class="meter"><div id="staminaFill"></div></div>
+            <small>Hold Space while YOUR stone is moving</small>
           </div>
         </div>
       </section>
-      <aside class="hud">
+
+      <aside class="sidebar">
         <div class="panel">
-          <h3>Score</h3>
+          <h3>Match</h3>
           <div>End <span id="endText">1</span>/6</div>
-          <div>You <span id="playerScore">0</span> - <span id="aiScore">0</span> AI</div>
-          <div>Throw: <span id="throwText">1 / 10</span></div>
-          <div>Hammer: <span id="hammerText">You</span></div>
+          <div>Throw <span id="throwText">1/10</span></div>
+          <div>You <span id="pScore">0</span> - <span id="aScore">0</span> AI</div>
+          <div>Hammer <span id="hammerText">You</span></div>
+          <div>AI Style <span id="aiStyleText">-</span></div>
         </div>
         <div class="panel">
-          <h3>Ice Report</h3>
-          <div>Curl <div class="bar"><div id="iceCurlBar"></div></div></div>
-          <div>Speed <div class="bar"><div id="iceSpeedBar"></div></div></div>
-          <div>Late Grab <div class="bar"><div id="iceLateBar"></div></div></div>
-        </div>
-        <div class="panel">
-          <h3>Node Map</h3>
+          <h3>Run Path</h3>
           <div id="nodeMap"></div>
         </div>
-        <div class="panel log-panel">
-          <h3>Terminal Log</h3>
-          <div id="eventLog"></div>
+        <div class="panel">
+          <h3>Log</h3>
+          <div id="log"></div>
         </div>
       </aside>
     </main>
 
-    <section id="screenReward" class="screen">
-      <h2>Choose Upgrade</h2>
+    <section id="screenReward" class="screen flow">
+      <h2>Choose Reward</h2>
       <div id="rewardCards" class="cards"></div>
     </section>
 
-    <section id="screenShop" class="screen">
+    <section id="screenShop" class="screen flow">
       <h2>Shop</h2>
-      <div id="shopItems" class="cards"></div>
-      <button id="shopContinueBtn">Continue</button>
+      <div id="shopCards" class="cards"></div>
+      <button id="shopDoneBtn">Continue</button>
     </section>
 
-    <section id="screenEvent" class="screen">
+    <section id="screenEvent" class="screen flow">
       <h2>Event</h2>
       <div id="eventText"></div>
-      <div id="eventChoices" class="cards"></div>
+      <div id="eventCards" class="cards"></div>
     </section>
 
-    <section id="screenEndSummary" class="screen">
+    <section id="screenEnd" class="screen flow">
       <h2>End Summary</h2>
-      <div id="endSummaryText"></div>
-      <button id="endSummaryContinueBtn">Continue</button>
+      <div id="endSummary"></div>
+      <button id="endBtn">Continue</button>
     </section>
 
-    <section id="screenRunSummary" class="screen">
+    <section id="screenRun" class="screen flow">
       <h2>Run Summary</h2>
-      <div id="runSummaryText"></div>
+      <div id="runSummary"></div>
       <button id="newRunBtn">New Run</button>
     </section>
   </div>
-
   <script src="game.js"></script>
 </body>
 </html>
